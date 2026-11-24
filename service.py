@@ -1480,7 +1480,7 @@ AVAILABLE_MODELS = {
             "id": "NANO_BANANA",
             "name": "Nano Banana",
             "description": "Nano Banana by Google - Supports up to 3 Reference Images",
-            "credit": 5,
+            "credit": 2,
             "supports_reference_images": True,
             "max_reference_images": 3,
             "supported_sizes": ["1:1", "16:9", "9:16", "4:3", "3:4"],
@@ -1493,7 +1493,7 @@ AVAILABLE_MODELS = {
             "id": "NANO_BANANA_2",
             "name": "Nano Banana 2",
             "description": "Nano Banana 2 by Google - Supports up to 5 Reference Images",
-            "credit": 5,
+            "credit": 2,
             "supports_reference_images": True,
             "max_reference_images": 5,
             "supported_sizes": ["1:1", "16:9", "9:16", "4:3", "3:4"],
@@ -1506,7 +1506,7 @@ AVAILABLE_MODELS = {
             "id": "NANO_BANANA_PRO",
             "name": "Nano Banana Pro",
             "description": "Nano Banana Pro by Google - Supports up to 5 Reference Images",
-            "credit": 5,
+            "credit": 2,
             "supports_reference_images": True,
             "max_reference_images": 5,
             "supported_sizes": ["1:1", "16:9", "9:16", "4:3", "3:4"],
@@ -1519,7 +1519,7 @@ AVAILABLE_MODELS = {
             "id": "GPT_IMAGE_2",
             "name": "GPT-Image-2",
             "description": "GPT-Image-2 by OpenAI - Supports up to 5 Reference Images",
-            "credit": 5,
+            "credit": 2,
             "supports_reference_images": True,
             "max_reference_images": 5,
             "supported_sizes": ["1:1", "16:9", "9:16", "4:3", "3:4"],
@@ -1534,7 +1534,7 @@ AVAILABLE_MODELS = {
             "id": "seedance_2_5",
             "name": "Seedance 2.5",
             "description": "Seedance 2.5 by BytePlus - MAX: 1080p:11sn, 720p:23sn, 480p:30sn",
-            "credit": 10,
+            "credit": 5,
             "supports_start_frame": True,
             "supports_end_frame": True,
             "supports_reference_images": True,
@@ -1574,7 +1574,7 @@ AVAILABLE_MODELS = {
             "id": "wan_3_0",
             "name": "Wan 3.0",
             "description": "Wan 3.0 by Alibaba - Supports TextToVideo, ImageToVideo, ReferenceToVideo",
-            "credit": 10,
+            "credit": 5,
             "supports_start_frame": True,
             "supports_end_frame": True,
             "supports_reference_images": True,
@@ -1598,7 +1598,7 @@ AVAILABLE_MODELS = {
             "id": "gemini_omni_flash",
             "name": "Gemini Omni 1.1 Flash",
             "description": "Gemini Omni 1.1 Flash by Google - Supports TextToVideo, ImageToVideo, ReferenceToVideo",
-            "credit": 10,
+            "credit": 5,
             "supports_start_frame": True,
             "supports_end_frame": True,
             "supports_reference_images": True,
@@ -1617,7 +1617,7 @@ AVAILABLE_MODELS = {
             "id": "veo_3_1_fast",
             "name": "Veo 3.1 Fast",
             "description": "Veo 3.1 Fast by Google - Supports TextToVideo, ImageToVideo",
-            "credit": 10,
+            "credit": 5,
             "supports_start_frame": True,
             "supports_end_frame": True,
             "supports_reference_images": False,
@@ -2088,40 +2088,88 @@ def encrypt_myedit_aes_gcm_hex(aes_key: bytes, raw_bytes: bytes, timestamp_ms: i
     return cipher_bytes.hex()
 
 def get_subscription_token(member_token: str) -> str:
+    # subscriptions/auth istekleri, yeni hesap açılışlarında (500 'Unable to get total space')
+    # veya anlık istek çakışmalarında (429 'Too many requests') geçici hatalar verebilir.
+    # Görevin hemen düşmemesi için 5 saniye arayla maksimum 3 kez denenir.
+    max_retries = 3
+    retry_delay_sec = 5
+
     rsa_pub_key = get_myedit_rsa_public_key()
-    aes_key = AESGCM.generate_key(bit_length=256)
-    ts_ms = int(time.time() * 1000)
+    last_resp = None
 
-    key_param = rsa_encrypt_aes_key(rsa_pub_key, aes_key)
-    cl_sid_json = json.dumps({"cl_sid": [SID_AOL_POL]}, separators=(',', ':'))
-    receipt_param = encrypt_myedit_aes_gcm(aes_key, cl_sid_json, ts_ms, 0)
+    for attempt in range(max_retries):
+        aes_key = AESGCM.generate_key(bit_length=256)
+        ts_ms = int(time.time() * 1000)
 
-    headers = {
-        "User-Agent": HEADERS["User-Agent"],
-        "Authorization": f"Bearer {member_token}",
-        "Content-Type": "application/json",
-        "Origin": "https://myedit.online",
-        "Referer": "https://myedit.online/",
-    }
-    body = {
-        "product": "myedit",
-        "version": "3.9.0",
-        "versiontype": "3.9.0",
-        "platform": "web",
-        "receipt": receipt_param,
-        "key": key_param,
-        "timestamp": ts_ms,
-    }
-    resp = requests.post(SUB_AUTH_URL, json=body, headers=headers, timeout=30)
-    if resp.status_code == 401:
-        raise AuthExpiredError(f"Auth token expired on subscriptions/auth: {resp.text}")
-    if resp.status_code == 403:
-        raise CreditExhaustedError(f"Subscription auth forbidden/exhausted: {resp.text}")
-    resp.raise_for_status()
-    return resp.json()["subscription_token"]
+        key_param = rsa_encrypt_aes_key(rsa_pub_key, aes_key)
+        cl_sid_json = json.dumps({"cl_sid": [SID_AOL_POL]}, separators=(',', ':'))
+        receipt_param = encrypt_myedit_aes_gcm(aes_key, cl_sid_json, ts_ms, 0)
+
+        headers = {
+            "User-Agent": HEADERS["User-Agent"],
+            "Authorization": f"Bearer {member_token}",
+            "Content-Type": "application/json",
+            "Origin": "https://myedit.online",
+            "Referer": "https://myedit.online/",
+        }
+        body = {
+            "product": "myedit",
+            "version": "3.9.0",
+            "versiontype": "3.9.0",
+            "platform": "web",
+            "receipt": receipt_param,
+            "key": key_param,
+            "timestamp": ts_ms,
+        }
+
+        try:
+            resp = requests.post(SUB_AUTH_URL, json=body, headers=headers, timeout=30)
+            last_resp = resp
+
+            # 401 token süresi bitti ve 403 kredi bitti durumları beklemeksizin hesap değişimine yönlendirilir
+            if resp.status_code == 401:
+                raise AuthExpiredError(f"Auth token expired on subscriptions/auth: {resp.text}")
+            if resp.status_code == 403:
+                raise CreditExhaustedError(f"Subscription auth forbidden/exhausted: {resp.text}")
+
+            if resp.status_code == 200:
+                data = resp.json()
+                if "subscription_token" in data:
+                    return data["subscription_token"]
+
+            # 429 (rate-limit) veya 500 (geçici bulut alanı senkronizasyon) hatasında 5 sn bekle ve tekrar dene
+            if resp.status_code in (429, 500, 502, 503, 504):
+                if attempt < max_retries - 1:
+                    print(f"[SUB_AUTH] Geçici sunucu cevabı ({resp.status_code}). {retry_delay_sec} sn sonra tekrar deneniyor ({attempt+1}/{max_retries})...")
+                    time.sleep(retry_delay_sec)
+                    continue
+
+            resp.raise_for_status()
+            return resp.json()["subscription_token"]
+
+        except (AuthExpiredError, CreditExhaustedError):
+            raise
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                print(f"[SUB_AUTH] Bağlantı hatası ({e}). {retry_delay_sec} sn sonra tekrar deneniyor ({attempt+1}/{max_retries})...")
+                time.sleep(retry_delay_sec)
+                continue
+            raise
+
+    if last_resp is not None:
+        last_resp.raise_for_status()
+    raise RuntimeError("subscriptions/auth token 3 deneme sonucunda alınamadı.")
+
 
 def format_error_code(error) -> str:
     """Returns strictly the HTTP status code (e.g. '429', '500', '503', '504') for client/frontend log visibility."""
+    print(f"\n[KONSOL HATA DETAYI] -> {repr(error)}", flush=True)
+    if hasattr(error, 'response') and error.response is not None:
+        try:
+            print(f"[SUNUCU CEVAP METNİ] -> {error.response.text}", flush=True)
+        except Exception:
+            pass
+
     if not error:
         return "500"
     if isinstance(error, requests.exceptions.RequestException):
@@ -3101,9 +3149,25 @@ def generate_ai_video_service(
     return {"status": "Timeout", "reference_urls": uploaded_reference_urls}
 
 # ==============================================================================
-# service.py ACCOUNT CACHE & REUSE SYSTEM
+# service-frontier-beklemeli.py ACCOUNT CACHE & REUSE SYSTEM (CONFIGURABLE)
 # ==============================================================================
 
+ACCOUNT_CONFIG = {
+    # İki yeni hesap açılışı arasındaki minimum bekleme süresi (sn) [2 dakika]:
+    "account_creation_interval_sec": 60,
+
+    # İki görev gönderimi arasındaki minimum bekleme süresi (sn) [1 dakika]:
+    "task_interval_sec": 60,
+
+    # Yeni hesap açma başarısız olursa maksimum deneme sayısı:
+    "max_create_retries": 3,
+
+    # Başarısız hesap açma denemeleri arasındaki bekleme süresi (sn) [1 dakika]:
+    "create_retry_delay_sec": 60,
+
+    # Hata durumlarında (403 kredi bitti, 401 token, DB login) YENİ HESAP AÇMAYA geçmeden önceki bekleme süresi (sn) [1 dakika]:
+    "error_rotation_delay_sec": 60,
+}
 
 ACTIVE_ACCOUNTS = {} # {api_key_id: {"email": email, "password": password, "member_token": token, "timestamp": time.time()}}
 ACCOUNT_LOCK = threading.Lock()
@@ -3111,6 +3175,79 @@ ACCOUNT_LOCK = threading.Lock()
 # Her API anahtari icin hesap acma surecini kilitleyen mekanizma
 ACCOUNT_CREATION_LOCKS = {}
 CREATION_LOCK_MUTEX = threading.Lock()
+
+LAST_ACCOUNT_CREATION_TIME = {} # {api_key_id: timestamp}
+ACCOUNT_TIME_LOCK = threading.Lock()
+
+LAST_TASK_DISPATCH_TIME = {} # {api_key_id: timestamp}
+TASK_DISPATCH_LOCKS = {} # {api_key_id: threading.Lock()}
+TASK_LOCK_MUTEX = threading.Lock()
+
+def get_task_dispatch_lock(api_key_id):
+    """Her api_key_id icin ozel bir gorev gonderim sirasi kilidi doner."""
+    with TASK_LOCK_MUTEX:
+        if api_key_id not in TASK_DISPATCH_LOCKS:
+            TASK_DISPATCH_LOCKS[api_key_id] = threading.Lock()
+        return TASK_DISPATCH_LOCKS[api_key_id]
+
+LAST_ERROR_TIME = {} # {api_key_id: timestamp}
+ERROR_TIME_LOCK = threading.Lock()
+
+def record_error_rotation_time(api_key_id):
+    """Hata zamanını kaydeder."""
+    with ERROR_TIME_LOCK:
+        LAST_ERROR_TIME[api_key_id] = time.time()
+
+def wait_for_error_rotation_delay(api_key_id):
+    """Hata durumunda yeni hesap açmaya geçmeden önce en az error_rotation_delay_sec (60s) bekleme sağlar."""
+    interval = ACCOUNT_CONFIG.get("error_rotation_delay_sec", 60)
+    if interval <= 0:
+        return
+    with ERROR_TIME_LOCK:
+        last_time = LAST_ERROR_TIME.get(api_key_id, 0)
+        elapsed = time.time() - last_time
+        wait_sec = interval - elapsed if elapsed < interval else 0
+    if wait_sec > 0:
+        print(f"[ACCOUNT] Hata sonrası yeni hesap açılışı bekleme kuralı ({interval}s). {wait_sec:.1f} saniye bekleniyor...")
+        time.sleep(wait_sec)
+
+def wait_for_account_creation_interval(api_key_id):
+    """İki yeni hesap açılışı arasında en az account_creation_interval_sec (120s) bekleme sağlar (kilit dışı uyur)."""
+    interval = ACCOUNT_CONFIG.get("account_creation_interval_sec", 120)
+    if interval <= 0:
+        return
+    with ACCOUNT_TIME_LOCK:
+        last_time = LAST_ACCOUNT_CREATION_TIME.get(api_key_id, 0)
+        elapsed = time.time() - last_time
+        wait_sec = interval - elapsed if elapsed < interval else 0
+    if wait_sec > 0:
+        print(f"[ACCOUNT] İki hesap açılışı arası bekleme kuralı ({interval}s). {wait_sec:.1f} saniye bekleniyor...")
+        time.sleep(wait_sec)
+
+def record_account_creation_time(api_key_id):
+    """Başarılı hesap açılış zamanını kaydeder."""
+    with ACCOUNT_TIME_LOCK:
+        LAST_ACCOUNT_CREATION_TIME[api_key_id] = time.time()
+
+def wait_for_task_interval(api_key_id):
+    """İki görev gönderimi arasında en az task_interval_sec bekleme sağlar.
+    Aynı API anahtarına ait paralel görevlerin aynı anda MyEdit'e vurmasını engellemek için
+    görev kilidi (task_dispatch_lock) ile sıraya sokar.
+    """
+    interval = ACCOUNT_CONFIG.get("task_interval_sec", 60)
+    if interval <= 0:
+        return
+
+    task_lock = get_task_dispatch_lock(api_key_id)
+    with task_lock:
+        last_time = LAST_TASK_DISPATCH_TIME.get(api_key_id, 0)
+        elapsed = time.time() - last_time
+        wait_sec = interval - elapsed if elapsed < interval else 0
+        if wait_sec > 0:
+            print(f"[TASK] Görevler arası bekleme kuralı ({interval}s). {wait_sec:.1f} saniye bekleniyor...")
+            time.sleep(wait_sec)
+        LAST_TASK_DISPATCH_TIME[api_key_id] = time.time()
+
 
 def get_creation_lock(api_key_id):
     """Her api_key_id icin ozel bir hesap acma kilidi doner."""
@@ -3121,6 +3258,7 @@ def get_creation_lock(api_key_id):
 
 def mark_account_exhausted(api_key_id, email):
     """Marks an account as used=1 (credits exhausted) in the database and removes it from active cache."""
+    record_error_rotation_time(api_key_id)
     with ACCOUNT_LOCK:
         if api_key_id in ACTIVE_ACCOUNTS and ACTIVE_ACCOUNTS[api_key_id].get("email") == email:
             del ACTIVE_ACCOUNTS[api_key_id]
@@ -3248,7 +3386,15 @@ def get_or_create_active_account(api_key_id, task_id=None, force_new=False):
                                 pass
                         return member_token, acc_data
                 else:
-                    print(f"[ACCOUNT] Login failed for DB account ({email}). Registering a fresh new account...")
+                    print(f"[ACCOUNT] Login failed for DB account ({email}). Marking used=1...")
+                    record_error_rotation_time(api_key_id)
+                    try:
+                        if db.DB_TYPE == 'postgresql':
+                            db._execute_query('UPDATE accounts SET used = 1 WHERE api_key_id = %s AND email = %s', (api_key_id, email))
+                        else:
+                            db._execute_query('UPDATE accounts SET used = 1 WHERE api_key_id = ? AND email = ?', (api_key_id, email))
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"[ACCOUNT] Error retrieving DB account: {e}")
 
@@ -3265,10 +3411,9 @@ def get_or_create_active_account(api_key_id, task_id=None, force_new=False):
                     acc = candidate
                     is_waiting_request = True
 
-        # Sirada bekleyen istekler icin 1 dakika aralik koyma
+        # Sırada bekleyen istek uyandığında hazır hesabı devralır (görevler arası bekleme wait_for_task_interval ile yönetilir)
         if is_waiting_request and acc:
-            print(f"[ACCOUNT] Sirada bekleyen istek uyandi. 1 dakika aralik icin 60 saniye bekleniyor...")
-            time.sleep(60)
+            print(f"[ACCOUNT] Sırada bekleyen istek uyandı. Aktif hesap devralınıyor: {acc['email']}")
             if task_id:
                 try:
                     if db.DB_TYPE == 'postgresql':
@@ -3279,11 +3424,20 @@ def get_or_create_active_account(api_key_id, task_id=None, force_new=False):
                     pass
             return acc["member_token"], acc
 
-        # Sadece sirada 1. olan istek temp-mail ile yeni hesap acar
-        for attempt in range(5):
-            print(f"[ACCOUNT] Registering new account for api_key_id={api_key_id} (attempt {attempt+1}/5)...")
+        # Hata sonrası yeni hesap açılışı öncesi bekleme kuralı (60s)
+        wait_for_error_rotation_delay(api_key_id)
+
+        # İki YENİ hesap açılışı arasında en az account_creation_interval_sec (120s) bekleme kuralı
+        wait_for_account_creation_interval(api_key_id)
+
+        # Sadece sırada 1. olan istek temp-mail ile yeni hesap açar (3 deneme, 1'er dk ara)
+        max_retries = ACCOUNT_CONFIG.get("max_create_retries", 3)
+        retry_delay = ACCOUNT_CONFIG.get("create_retry_delay_sec", 60)
+        for attempt in range(max_retries):
+            print(f"[ACCOUNT] Registering new account for api_key_id={api_key_id} (attempt {attempt+1}/{max_retries})...")
             member_token, email = create_myedit_account_wrapper(api_key_id)
             if member_token and email:
+                record_account_creation_time(api_key_id)
                 password = "CyberLink123!"
                 acc_data = {
                     "email": email,
@@ -3302,9 +3456,9 @@ def get_or_create_active_account(api_key_id, task_id=None, force_new=False):
                     except Exception:
                         pass
                 return member_token, acc_data
-            if attempt < 4:
-                print(f"[ACCOUNT] Registration attempt {attempt+1} failed. Waiting 10s before retry...")
-                time.sleep(10)
+            if attempt < max_retries - 1:
+                print(f"[ACCOUNT] Registration attempt {attempt+1} failed. Waiting {retry_delay}s before retry...")
+                time.sleep(retry_delay)
 
     return None, None
 
@@ -3521,6 +3675,9 @@ def process_image_task(task_id, params, api_key_id):
                     "end_frame": params.get('end_frame')
                 })
                 db.update_task_token(task_id, token_data)
+
+                # Görevler arası 1 dakika bekleme kuralı
+                wait_for_task_interval(api_key_id)
 
                 result = generate_ai_image_service(
                     member_token=member_token,
@@ -3739,6 +3896,7 @@ def process_video_task(task_id, params, api_key_id):
                 if model == "sora_2_std" and current_input_mode == "TextToVideo" and not current_source_image_path:
                     try:
                         print(f"[SORA-2] Auto-generating initial frame for Text-to-Video task {task_id}...")
+                        wait_for_task_interval(api_key_id)
                         t2i_res = generate_ai_image_service(
                             member_token=member_token,
                             user_prompt=prompt,
@@ -3760,6 +3918,9 @@ def process_video_task(task_id, params, api_key_id):
                                 current_input_mode = "ImageToVideo"
                     except Exception as ex:
                         print(f"[SORA-2] Auto-frame generation error: {ex}")
+
+                # Görevler arası 1 dakika bekleme kuralı
+                wait_for_task_interval(api_key_id)
 
                 result = generate_ai_video_service(
                     member_token=member_token,
